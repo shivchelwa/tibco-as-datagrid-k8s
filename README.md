@@ -3,7 +3,7 @@ Setup TIBCO ActiveSpaces DataGrid using Kubernetes
 
 ## Overview
 
-An activespaces datagrid is setup on either Minikube or Kubernetes cluster on AWS. Following Tools are must be installed on the your machine. Alternatively, a ubuntu virtualbox can be setup using Vagrant. The [Vagrantfile](https://github.com/shivchelwa/tibco-as-datagrid-k8s/blob/master/Vagrantfile) uses[bootsrtap.sh](https://github.com/shivchelwa/tibco-as-datagrid-k8s/blob/master/bootstrap.sh) to provision these tools.
+An activespaces datagrid is setup on either Minikube or Kubernetes cluster on AWS. Following Tools are must be installed on the your machine. Alternatively, a ubuntu virtualbox can be setup using Vagrant. The [Vagrantfile](https://github.com/shivchelwa/tibco-as-datagrid-k8s/blob/master/Vagrantfile) uses [bootsrtap.sh](https://github.com/shivchelwa/tibco-as-datagrid-k8s/blob/master/bootstrap.sh) to provision these tools.
 
 1. kops
 2. kubectl
@@ -31,7 +31,7 @@ Create a S3 bucket in the region where you intent to setup K8s cluset. This s3 b
 Use the below command to create AS datagrid on Minikube. In minikube-values.yaml replace the image names with your repository names. The ActiveSpcaces docker images must be accessible with Minikube. The images can be made accessible in different ways.
 1. Ssh into minikube and pull images to local repository
 2. Ssh into minikube and login to your private repository.
-3. Create a kubernetes secret using below command and set imagePullSecrets in the yaml file.
+3. Create a kubernetes secret using below command and set imagePullSecrets in the [minikube.yaml](https://github.com/shivchelwa/tibco-as-datagrid-k8s/blob/master/tibdg-helm/minikube-values.yaml) file.
 
 In this project, imagePullSecrets is used and need to be replaced once secret is created. Once the above step is complete. Use below command to deploy a AS datagrid.
 
@@ -63,7 +63,7 @@ Initialize helm using this service account
 
 `helm init --service-account tiller`
 
-Create the AS datagrid using below command in the directory having Chart.yaml. In this exercise, gp2 (general purpose) storage class is used for reamlserver, keeper and as node data store. You can change this storage class with a different storage class in aws-values.yaml.
+Create the AS datagrid using below command in the directory having [Chart.yaml](https://github.com/shivchelwa/tibco-as-datagrid-k8s/blob/master/tibdg-helm/Chart.yaml). In this exercise, gp2 (general purpose) storage class is used for reamlserver, keeper and as node data store. You can change this storage class with a different storage class in [aws-values.yaml](https://github.com/shivchelwa/tibco-as-datagrid-k8s/blob/master/tibdg-helm/aws-values.yaml).
 
 `helm install --name tibdg-helm -f aws-values.yaml --debug .`
 
