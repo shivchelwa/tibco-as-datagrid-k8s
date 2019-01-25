@@ -1,0 +1,190 @@
+# Default values for tibdg.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Active Spaces version information
+asVersion: 3.5.1
+
+# FTL version information
+ftlVersion: 5.3.1
+
+# Allows specification of custom grid creation options.
+gridCreateOptions: null
+
+# Allows specification of a custom grid name. The default grid name is used
+# if left null.
+gridName: null
+
+# Additional tibdg commands to be run at grid initialization. Can be used to
+# create tables, indexes, etc. The default table t1 is required for use with
+# the operations sample application.
+tibdgConfig: |-
+  table create t1 key long
+  column create t1 value string
+
+realmserver:
+  image: 233043593649.dkr.ecr.us-east-1.amazonaws.com/ftl-tibrealmserver
+  # Set to null to use .Values.ftlVersion
+  imageTag: null
+  storageCapacity: 1Gi
+  # These are ports the realmserver process will listen on. The 'ftl' port is
+  # advertised to clients, so if external access is enabled the clients must be
+  # able to access the ftl port here on whatever proxy method is used. E.g. if
+  # using NodePort, the ftl port must be in the cluster's NodePort range, and
+  # must be available on every machine in the cluster.
+  ports:
+    http: 30080
+    ftl: 30083
+    gui: 30085
+  # The Persistent Volume Storage Class for stateful data. The realmserver and
+  # tibdgkeeper pods require storage that is shared across all nodes. Depending
+  # on your cluster configuration, these may need to be provisioned before hand.
+  # Set the storage class here as appropriate for your cluster.
+  # If defined, then storageClassName: <storageClass>
+  # If set to "-", then storageClassName: "", which disables dynamic provisioning
+  # If undefined or set to null, no storageClassName spec is
+  #   set, choosing the default provisioner.  (gp2 on AWS, standard on
+  #   GKE, AWS & OpenStack)
+  storageClass: null
+  # If external access mode is set LoadBalancer, set the LoadBalancer ip
+  # address for the realmserver. If null will use the value of
+  # tibdgproxy.advertisedIPs
+  loadBalancerIP: null
+  resources: {}
+    # If you do want to specify resources, uncomment the following lines,
+    # adjust them as necessary, and remove the curly braces after
+    # 'resources:'.
+    # limits:
+    #  cpu: 100m
+    #  memory: 128Mi
+    # requests:
+    #  cpu: 100m
+    #  memory: 128Mi
+
+tibdgadmind:
+  image: 233043593649.dkr.ecr.us-east-1.amazonaws.com/as-tibdgadmind
+  # Set to null to use .Values.asVersion
+  imageTag: null
+  # This is the port the tibdgadmind process will listen on. This port must be
+  # accessible to clients, so if external access is enabled the clients must
+  # be able to access this port on whatever proxy method is used. E.g. if using
+  # NodePort, this port must be in the cluster's NodePort range, and must be
+  # available on every machine in the cluster.
+  ports:
+    admind: 30081
+  resources: {}
+    # If you do want to specify resources, uncomment the following lines,
+    # adjust them as necessary, and remove the curly braces after
+    # 'resources:'.
+    # limits:
+    #  cpu: 100m
+    #  memory: 128Mi
+    # requests:
+    #  cpu: 100m
+    #  memory: 128Mi
+
+tibdg:
+  image: 233043593649.dkr.ecr.us-east-1.amazonaws.com/as-tibdg
+  # Set to null to use .Values.asVersion
+  imageTag: null
+
+tibdgnode:
+  image: 233043593649.dkr.ecr.us-east-1.amazonaws.com/as-tibdgnode
+  # Set to null to use .Values.asVersion
+  imageTag: null
+  # The number of copysets to partition your data among.
+  copysetCount: 1
+  # The number of replicas in each copyset, i.e. how many copies of the data
+  # are kept.
+  copysetSize: 2
+  storageCapacity: 10Gi
+  # The Persistent Volume Storage Class for local data. Recommended for tibdgnode
+  # pods to use storage local to the node for performance. Data migrations will
+  # be handled by the replication protocol within tibdg itself.
+  # Set the storage class here as appropriate for your cluster.
+  # If set to 'emptyDir', each tibdgnode will use an emptyDir volume instead of
+  # a Persistent Volume.
+  # If defined and not 'emptyDir', then storageClassName: <storageClass>
+  # If set to "-", then storageClassName: "", which disables dynamic provisioning
+  # If undefined or set to null, no storageClassName spec is
+  #   set, choosing the default provisioner.  (gp2 on AWS, standard on
+  #   GKE, AWS & OpenStack)
+  storageClass: null
+  resources: {}
+    # If you do want to specify resources, uncomment the following lines,
+    # adjust them as necessary, and remove the curly braces after
+    # 'resources:'.
+    # limits:
+    #  cpu: 100m
+    #  memory: 128Mi
+    # requests:
+    #  cpu: 100m
+    #  memory: 128Mi
+
+tibdgkeeper:
+  image: 233043593649.dkr.ecr.us-east-1.amazonaws.com/as-tibdgkeeper
+  # Set to null to use .Values.asVersion
+  imageTag: null
+  # The number of state keepers. Valid values are 1 and 3. Should not be lower
+  # than 3 for production workloads.
+  count: 3
+  storageCapacity: 1Gi
+  # The Persistent Volume Storage Class for stateful data. The realmserver and
+  # tibdgkeeper pods require storage that is shared across all nodes. Depending
+  # on your cluster configuration, these may need to be provisioned before hand.
+  # Set the storage class here as appropriate for your cluster.
+  # If defined, then storageClassName: <storageClass>
+  # If set to "-", then storageClassName: "", which disables dynamic provisioning
+  # If undefined or set to null, no storageClassName spec is
+  #   set, choosing the default provisioner.  (gp2 on AWS, standard on
+  #   GKE, AWS & OpenStack)
+  storageClass: null
+  resources: {}
+    # If you do want to specify resources, uncomment the following lines,
+    # adjust them as necessary, and remove the curly braces after
+    # 'resources:'.
+    # limits:
+    #  cpu: 100m
+    #  memory: 128Mi
+    # requests:
+    #  cpu: 100m
+    #  memory: 128Mi
+
+tibdgproxy:
+  image: 233043593649.dkr.ecr.us-east-1.amazonaws.com/as-tibdgproxy
+  # Set to null to use .Values.asVersion
+  imageTag: null
+  # The number of proxy nodes to deploy.
+  count: 2
+  # If external access is enabled, each proxy is given a unique port starting
+  # from externalBasePort up to externalBasePort + count - 1. These
+  # ports are advertised to clients so they must be accessible from whatever
+  # proxy method is used.
+  externalBasePort: 30100
+  # If external access is enabled, this option can configure the IP address
+  # that is advertised to clients to connect to the proxy. The default value
+  # of $(NODE_IP) will advertise the k8s node IP address. Can be set to one or
+  # more comma-separated ip addresses. The same value is used for all proxies.
+  advertisedIPs: $(NODE_IP)
+  listenPort: 8888
+  resources: {}
+    # If you do want to specify resources, uncomment the following lines,
+    # adjust them as necessary, and remove the curly braces after
+    # 'resources:'.
+    # limits:
+    #  cpu: 100m
+    #  memory: 128Mi
+    # requests:
+    #  cpu: 100m
+    #  memory: 128Mi
+
+# Configures access for clients external to the k8s cluster. Set to null
+# to disable external access. 
+externalAccessMode: null # [ null | NodePort | LoadBalancer ]
+
+pod:
+  # Set to "0" (including double quotes) to render 0.
+  # Leave null to use k8s default.
+  # Set to any positive integer otherwise.
+  terminationGracePeriodSeconds: null
+
