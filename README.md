@@ -3,7 +3,7 @@ Setup TIBCO ActiveSpaces DataGrid using Kubernetes
 
 ## Overview
 
-An activespaces datagrid is setup on either Minikube or Kubernetes cluster on AWS. Following Tools are must be installed on the your machine. Alternatively, a ubuntu virtualbox can be setup using Vagrant. The Vagrantfile uses bootsrtap.sh to provision these tools.
+An activespaces datagrid is setup on either Minikube or Kubernetes cluster on AWS. Following Tools are must be installed on the your machine. Alternatively, a ubuntu virtualbox can be setup using Vagrant. The [Vagrantfile](https://github.com/shivchelwa/tibco-as-datagrid-k8s/blob/master/Vagrantfile) uses[bootsrtap.sh](https://github.com/shivchelwa/tibco-as-datagrid-k8s/blob/master/bootstrap.sh) to provision these tools.
 
 1. kops
 2. kubectl
@@ -12,7 +12,7 @@ An activespaces datagrid is setup on either Minikube or Kubernetes cluster on AW
 
 ## Prerequisites
 
-Below TIBCO ActiveSpaces DataGrid component images must be available on your AWS Elastic Container Registry(ECR)
+Below TIBCO ActiveSpaces DataGrid component images must be available on your AWS Elastic Container Registry(ECR). In this exercise AS 3.5.1 and FTL 5.3.1 is used. If you are using a different version replace versions in yaml files.
 as-tibdg
 as-tibdgadmind
 as-tibdgkeeper
@@ -29,7 +29,6 @@ Create a S3 bucket in the region where you intent to setup K8s cluset. This s3 b
 ## AS DataGrid on Minikube
 
 Use the below command to create AS datagrid on Minikube. In minikube-values.yaml replace the image names with your repository names. The ActiveSpcaces docker images must be accessible with Minikube. The images can be made accessible in different ways.
-
 1. Ssh into minikube and pull images to local repository
 2. Ssh into minikube and login to your private repository.
 3. Create a kubernetes secret using below command and set imagePullSecrets in the yaml file.
