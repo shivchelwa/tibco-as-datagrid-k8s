@@ -1,0 +1,462 @@
+
+# This is used to populate the grid configuration.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tibdg-conf
+  labels:
+{{ include "labels.standard" . | indent 4 }}
+data:
+  conf.tibdg: |
+    grid create {{ $.Values.gridCreateOptions }} copyset_size={{ $.Values.tibdgnode.copysetSize }} proxy_client_listen_port={{ $.Values.tibdgproxy.listenPort }} {{ $.Values.gridName }}
+{{- range until ( int $.Values.tibdgnode.copysetCount ) }}
+  {{- $copysetName := printf "cs-%02d" ( add1 . ) }}
+    copyset create {{ $copysetName }}
+  {{- range until ( int $.Values.tibdgnode.copysetSize ) }}
+    {{- $nodeName := printf "%s-node-%d" $copysetName . }}
+    node create --copyset {{ $copysetName }} --dir /data/{{ $nodeName }} {{ $nodeName }}
+  {{- end }}
+{{- end }}
+{{- range until ( int $.Values.tibdgkeeper.count ) }}
+    keeper create --dir /data/keeper-{{ . }} keeper-{{ . }}
+{{- end }}
+{{- range until ( int $.Values.tibdgproxy.count ) }}
+  {{- if $.Values.externalAccessMode }}
+    {{- /* give each proxy a unique external port */}}
+    proxy create proxy_client_listen_external_port={{ add . $.Values.tibdgproxy.externalBasePort }} proxy-{{ . }}
+  {{- else }}
+    proxy create proxy-{{ . }}
+  {{- end }}
+{{- end }}
+{{ $.Values.tibdgConfig | indent 4 }}
+
+...
+---
+
+# Sets up an in-cluster DNS entry for the realmserver pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: realmserver
+  labels:
+{{ include "labels.standard" . | indent 4 }}
+spec:
+  # clusterIP: None puts service in headless mode, i.e. a virtual cluster IP is
+  # not allocated for this service. This is needed for the tibdgadmind container
+  # to be able to both resolve and bind to its host name. If a virtual IP is
+  # allocated, the tibdgadmind will attempt to bind to it and fail.
+  clusterIP: None
+  ports:
+{{- range $key, $val := $.Values.tibdgadmind.ports }}
+    - name: {{ $key }}
+      port: {{ $val }}
+{{- end }}
+{{- range $key, $val := $.Values.realmserver.ports }}
+    - name: {{ $key }}
+      port: {{ $val }}
+{{- end }}
+  selector:
+    com.tibco.datagrid.service: realmserver
+
+...
+{{- if $.Values.externalAccessMode }}
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: realmserver-ext
+  labels:
+{{ include "labels.standard" . | indent 4 }}
+spec:
+  type: {{ $.Values.externalAccessMode }}
+  {{- if eq "LoadBalancer" $.Values.externalAccessMode }}
+  loadBalancerIP: {{ $.Values.realmserver.loadBalancerIP | default $.Values.tibdgproxy.advertisedIPs }} 
+  {{- end }}
+  selector:
+    com.tibco.datagrid.service: realmserver
+  ports:
+  {{- range $key, $val := $.Values.tibdgadmind.ports }}
+    - name: {{ $key }}
+    {{- if eq "NodePort" $.Values.externalAccessMode }}
+      nodePort: {{ $val }}
+    {{- end }}
+      port: {{ $val }}
+  {{- end }}
+  {{- range $key, $val := $.Values.realmserver.ports }}
+    - name: {{ $key }}
+    {{- if eq "NodePort" $.Values.externalAccessMode }}
+      nodePort: {{ $val }}
+    {{- end }}
+      port: {{ $val }}
+  {{- end }}
+
+...
+{{- end }}
+---
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: realmserver
+  labels:
+    com.tibco.datagrid.service: realmserver
+{{ include "labels.standard" . | indent 4 }}
+spec:
+  serviceName: realmserver
+  replicas: 1
+  selector:
+    matchLabels:
+      com.tibco.datagrid.service: realmserver
+  template:
+    metadata:
+      name: realmserver
+      labels:
+        com.tibco.datagrid.service: realmserver
+{{ include "labels.standard" . | indent 8 }}
+    spec:
+{{- if $.Values.pod.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ $.Values.pod.terminationGracePeriodSeconds }}
+{{- end }}
+{{- if $.Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ $.Values.image.pullSecret }}
+{{- end }}
+      {{- /* Both realmserver and tibdgadmind are run in the same pod because
+           * tibdgadmind is a lightweight extention of the realmserver. */}}
+      containers:
+        - name: realmserver
+          image: {{ $.Values.realmserver.image }}:{{ $.Values.realmserver.imageTag | default $.Values.ftlVersion }}
+          args:
+{{- range $key, $val := $.Values.realmserver.ports }}
+            - '--{{ $key }}'
+            - '*:{{ $val }}'
+{{- end }}
+          volumeMounts:
+            - mountPath: /data
+              name: realmserver-pv
+          resources:
+{{ toYaml $.Values.realmserver.resources | indent 12 }}
+        - name: tibdgadmind
+          image: {{ $.Values.tibdgadmind.image }}:{{ $.Values.tibdgadmind.imageTag | default $.Values.asVersion }}
+          args: [ '-r', 'http://realmserver:{{ $.Values.realmserver.ports.http }}', '-l', ':{{ $.Values.tibdgadmind.ports.admind }}' ]
+          resources:
+{{ toYaml $.Values.tibdgadmind.resources | indent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: realmserver-pv
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+{{- if $.Values.realmserver.storageClass }}
+  {{- if ( eq "-" $.Values.realmserver.storageClass ) }}
+        storageClassName: ""
+  {{- else }}
+        storageClassName: "{{ $.Values.realmserver.storageClass }}"
+  {{- end }}
+{{- end }}
+        resources:
+          requests:
+            storage: "{{ $.Values.realmserver.storageCapacity }}"
+
+...
+---
+
+{{- /* Job to inject grid configuration into realmserver. */}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tibdgconfig-job
+  labels:
+{{ include "labels.standard" . | indent 4 }}
+spec:
+  template:
+    metadata:
+      name: tibdgconfig
+      labels:
+{{ include "labels.standard" . | indent 8 }}
+    spec:
+      restartPolicy: OnFailure
+{{- if $.Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ $.Values.image.pullSecret }}
+{{- end }}
+      containers:
+        - name: tibdgconfig
+          image: {{ $.Values.tibdg.image }}:{{ $.Values.tibdg.imageTag | default $.Values.asVersion }}
+          args: [ '-r', 'http://realmserver:{{ $.Values.realmserver.ports.http }}', '-s', '/config/conf.tibdg' ]
+          volumeMounts:
+            - name: config-pv
+              mountPath: /config
+      volumes:
+        - name: config-pv
+          configMap:
+            name: tibdg-conf
+...
+---
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keeper
+  labels:
+    com.tibco.datagrid.service: tibdgkeeper
+{{ include "labels.standard" . | indent 4 }}
+spec:
+  serviceName: tibdgkeeper
+  replicas: {{ $.Values.tibdgkeeper.count }}
+  selector:
+    matchLabels:
+      com.tibco.datagrid.service: tibdgkeeper
+  template:
+    metadata:
+      name: tibdgkeeper
+      labels:
+        com.tibco.datagrid.service: tibdgkeeper
+{{ include "labels.standard" . | indent 8 }}
+    spec:
+{{- if $.Values.pod.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ int $.Values.pod.terminationGracePeriodSeconds }}
+{{- end }}
+{{- if $.Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ $.Values.image.pullSecret }}
+{{- end }}
+      containers:
+        - name: tibdgkeeper
+          image: {{ $.Values.tibdgkeeper.image }}:{{ $.Values.tibdgkeeper.imageTag | default $.Values.asVersion }}
+          args:
+            - '-r'
+            - 'http://realmserver:{{ $.Values.realmserver.ports.http }}'
+            - '-n'
+            - '$(POD_NAME)'
+{{- if $.Values.gridName }}
+            - '-g'
+            - '{{ $.Values.gridName }}'
+{{- end }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - mountPath: /data
+              name: keeper-pv
+          resources:
+{{ toYaml $.Values.tibdgkeeper.resources | indent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: keeper-pv
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+{{- if $.Values.tibdgkeeper.storageClass }}
+  {{- if (eq "-" $.Values.tibdgkeeper.storageClass) }}
+        storageClassName: ""
+  {{- else }}
+        storageClassName: "{{ $.Values.tibdgkeeper.storageClass }}"
+  {{- end }}
+{{- end }}
+        resources:
+          requests:
+            storage: "{{ $.Values.tibdgkeeper.storageCapacity }}"
+
+...
+{{- range until ( int $.Values.tibdgnode.copysetCount ) }}
+  {{- $copysetName := printf "cs-%02d" ( add1 . ) }}
+---
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $copysetName }}-node
+  labels:
+    com.tibco.datagrid.service: tibdgnode
+{{ include "labels.standard" $ | indent 4 }}
+spec:
+  serviceName: tibdgnode
+  replicas: {{ $.Values.tibdgnode.copysetSize }}
+  selector:
+    matchLabels:
+      com.tibco.datagrid.service: tibdgnode
+      com.tibco.datagrid.node.copyset: {{ $copysetName }}
+  template:
+    metadata:
+      name: tibdgnode
+      labels:
+        com.tibco.datagrid.service: tibdgnode
+        com.tibco.datagrid.node.copyset: {{ $copysetName }}
+{{ include "labels.standard" $ | indent 8 }}
+    spec:
+  {{- if $.Values.pod.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ $.Values.pod.terminationGracePeriodSeconds }}
+  {{- end }}
+  {{- if $.Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ $.Values.image.pullSecret }}
+  {{- end }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            {{- /* This rule sets a strong preference not to run on a k8s node
+                 * that is already running a tibdgnode from the same copyset.  */}}
+            - weight: 100
+              podAffinityTerm:
+                {{- /* hostname here means segregate based on individual k8s
+                     * nodes. Could change to availability zones or some other
+                     * property. */}}
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchExpressions:
+                    - key: com.tibco.datagrid.node.copyset
+                      operator: In
+                      values: [ {{ $copysetName }} ]
+            {{- /* This rule sets a preference not to run on a k8s node that is
+                 * already running a tibdgnode. However it is weighted lower
+                 * than the previous rule to avoid k8s nodes running the same
+                 * copyset - so if tibdgnodes land on the same k8s node, the should be from different copysets. */}}
+            - weight: 50
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchExpressions:
+                    - key: com.tibco.datagrid.service
+                      operator: In
+                      values: [ tibdgnode ]
+      containers:
+        - name: tibdgnode
+          image: {{ $.Values.tibdgnode.image }}:{{ $.Values.tibdgnode.imageTag | default $.Values.asVersion }}
+          args:
+            - '-r'
+            - 'http://realmserver:{{ $.Values.realmserver.ports.http }}'
+            - '-n'
+            - '$(POD_NAME)'
+  {{- if $.Values.gridName }}
+            - '-g'
+            - '{{ $.Values.gridName }}'
+  {{- end }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - mountPath: /data
+              name: node-pv
+          resources:
+{{ toYaml $.Values.tibdgnode.resources | indent 12 }}
+  {{- if and ( $.Values.tibdgnode.storageClass ) ( eq "emptyDir" ( printf "%s" $.Values.tibdgnode.storageClass ) ) }}
+      volumes:
+        - name: node-pv
+          emptyDir: {}
+  {{- else }}
+  volumeClaimTemplates:
+    - metadata:
+        name: node-pv
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+    {{- if $.Values.tibdgnode.storageClass }}
+      {{- if ( eq "-" $.Values.tibdgnode.storageClass ) }}
+        storageClassName: ""
+      {{- else }}
+        storageClassName: "{{ $.Values.tibdgnode.storageClass }}"
+      {{- end }}
+    {{- end }}
+        resources:
+          requests:
+            storage: "{{ $.Values.tibdgnode.storageCapacity }}"
+  {{- end }}
+
+...
+{{- end }}
+{{- if $.Values.externalAccessMode }}
+  {{- /* Generate external services for every proxy */}}
+  {{- range until ( int $.Values.tibdgproxy.count ) }}
+    {{- $externalPort := add . $.Values.tibdgproxy.externalBasePort }}
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxy-{{ . }}
+  labels:
+{{ include "labels.standard" $ | indent 4 }}
+spec:
+  type: {{ $.Values.externalAccessMode }}
+    {{- if eq "LoadBalancer" $.Values.externalAccessMode }}
+  loadBalancerIP: {{ $.Values.tibdgproxy.advertisedIPs }} 
+    {{- end }}
+  ports:
+    - name: ftl
+    {{- if eq "NodePort" $.Values.externalAccessMode }}
+      nodePort: {{ $externalPort }}
+      port: {{ $.Values.tibdgproxy.listenPort }}
+    {{- else if eq "LoadBalancer" $.Values.externalAccessMode }}
+      port: {{ $externalPort }}
+      targetPort: {{ $.Values.tibdgproxy.listenPort }}
+    {{- end }}
+  selector:
+    com.tibco.datagrid.service: tibdgproxy
+    statefulset.kubernetes.io/pod-name: proxy-{{ . }}
+
+...
+  {{- end }}
+{{- end }}
+---
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: proxy
+  labels:
+    com.tibco.datagrid.service: tibdgproxy
+{{ include "labels.standard" . | indent 4 }}
+spec:
+  serviceName: tibdgproxy
+  replicas: {{ $.Values.tibdgproxy.count }}
+  selector:
+    matchLabels:
+      com.tibco.datagrid.service: tibdgproxy
+  template:
+    metadata:
+      name: tibdgproxy
+      labels:
+        com.tibco.datagrid.service: tibdgproxy
+{{ include "labels.standard" . | indent 8 }}
+    spec:
+{{- if $.Values.pod.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ $.Values.pod.terminationGracePeriodSeconds }}
+{{- end }}
+{{- if $.Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ $.Values.image.pullSecret }}
+{{- end }}
+      containers:
+        - name: tibdgproxy
+          image: {{ $.Values.tibdgproxy.image }}:{{ $.Values.tibdgproxy.imageTag | default $.Values.asVersion }}
+          args:
+            - '-r'
+            - 'http://realmserver:{{ $.Values.realmserver.ports.http }}'
+            - '-n'
+            - '$(POD_NAME)'
+{{- if $.Values.gridName }}
+            - '-g'
+            - '{{ $.Values.gridName }}'
+{{- end }}
+{{- if $.Values.externalAccessMode }}
+            - '-e'
+            - '{{ $.Values.tibdgproxy.advertisedIPs }}'
+{{- end }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+{{- if and ( $.Values.externalAccessMode ) ( contains "NODE_IP" $.Values.tibdgproxy.advertisedIPs ) }}
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+{{- end }}
+          resources:
+{{ toYaml $.Values.tibdgproxy.resources | indent 12 }}
+
+...
